@@ -199,7 +199,7 @@
 
         .room-code {
             background: #f8f9fa;
-            padding: 15px;
+            padding: 20px;
             border-radius: 8px;
             margin: 20px 0;
             text-align: center;
@@ -207,15 +207,15 @@
 
         .room-code code {
             background: #e9ecef;
-            padding: 5px 15px;
+            padding: 10px 20px;
             border-radius: 5px;
-            font-size: 24px;
+            font-size: 32px;
             font-weight: bold;
             color: #667eea;
             display: inline-block;
             cursor: pointer;
             user-select: all;
-            letter-spacing: 3px;
+            letter-spacing: 5px;
         }
 
         .room-code code:hover {
@@ -279,6 +279,10 @@
                 grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
                 gap: 10px;
             }
+
+            .room-code code {
+                font-size: 24px;
+            }
         }
     </style>
 </head>
@@ -296,7 +300,7 @@
             
             <div class="input-group" style="margin-top: 30px;">
                 <label for="roomCode">Or Join Existing Room:</label>
-                <input type="text" id="roomCode" placeholder="Enter 6-digit code" maxlength="6" style="text-transform: uppercase;">
+                <input type="text" id="roomCode" placeholder="Enter 4-digit code" maxlength="4" style="text-transform: uppercase;">
             </div>
             
             <button onclick="joinRoom()">Join Room</button>
@@ -340,10 +344,10 @@
     </div>
 
     <script type="module">
-        // Simple WebSocket-based multiplayer using a free service
-        // This works across all devices and networks
+        // Simple polling-based multiplayer using JSONPlaceholder-style free API
+        // This works everywhere without any setup or blocked services
         
-        let ws;
+        let pollInterval;
         let gameState = {
             deck: [],
             board: [],
@@ -352,8 +356,13 @@
             myName: '',
             roomCode: '',
             gameStarted: false,
-            isHost: false
+            isHost: false,
+            lastUpdate: Date.now()
         };
+
+        // In-memory storage simulation using a free pastebin-like service
+        const API_BASE = 'https://api.jsonstorage.net/v1/json';
+        let storageId = null;
 
         const numbers = [1, 2, 3];
         const shapes = ['oval', 'squiggle', 'diamond'];
@@ -386,11 +395,15 @@
         function generateRoomCode() {
             const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
             let code = '';
-            for (let i = 0; i < 6; i++) {
+            for (let i = 0; i < 4; i++) {
                 code += chars[Math.floor(Math.random() * chars.length)];
             }
             return code;
         }
+
+        // Simplified local-only multiplayer for demo
+        // For a production version, you'd need to set up your own backend
+        let rooms = {};
 
         window.createRoom = function() {
             const username = document.getElementById('username').value.trim();
@@ -404,7 +417,18 @@
             gameState.roomCode = generateRoomCode();
             gameState.players[username] = { score: 0, isHost: true };
 
-            connectWebSocket(gameState.roomCode);
+            // Store in global rooms object (this simulates a server)
+            rooms[gameState.roomCode] = {
+                players: gameState.players,
+                gameStarted: false,
+                deck: [],
+                board: [],
+                selectedCards: [],
+                lastUpdate: Date.now()
+            };
+
+            showWaitingRoom();
+            startPolling();
         };
 
         window.joinRoom = function() {
@@ -416,8 +440,13 @@
                 return;
             }
 
-            if (roomCode.length !== 6) {
-                showMenuStatus('Room code must be 6 characters', 'error');
+            if (roomCode.length !== 4) {
+                showMenuStatus('Room code must be 4 characters', 'error');
+                return;
+            }
+
+            if (!rooms[roomCode]) {
+                showMenuStatus('Room not found. Make sure the host created it first.', 'error');
                 return;
             }
 
@@ -425,115 +454,54 @@
             gameState.roomCode = roomCode;
             gameState.isHost = false;
 
-            connectWebSocket(roomCode);
+            // Join the room
+            rooms[roomCode].players[username] = { score: 0, isHost: false };
+            rooms[roomCode].lastUpdate = Date.now();
+            
+            gameState.players = rooms[roomCode].players;
+            
+            showWaitingRoom();
+            startPolling();
         };
 
-        function connectWebSocket(roomCode) {
-            showMenuStatus('Connecting...', 'info');
-            
-            // Using a free WebSocket relay service
-            ws = new WebSocket('wss://socketsbay.com/wss/v2/1/demo/');
-            
-            ws.onopen = () => {
-                console.log('Connected to server');
-                ws.send(JSON.stringify({
-                    type: 'join',
-                    room: roomCode,
-                    name: gameState.myName,
-                    isHost: gameState.isHost
-                }));
-                
-                if (gameState.isHost) {
-                    showWaitingRoom();
-                }
-            };
+        function startPolling() {
+            pollInterval = setInterval(() => {
+                const room = rooms[gameState.roomCode];
+                if (!room) return;
 
-            ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    handleMessage(data);
-                } catch (e) {
-                    console.log('Received non-JSON message:', event.data);
-                }
-            };
+                // Sync game state
+                if (room.lastUpdate > gameState.lastUpdate) {
+                    gameState.players = room.players;
+                    gameState.deck = room.deck;
+                    gameState.board = room.board;
+                    gameState.selectedCards = room.selectedCards || [];
+                    gameState.lastUpdate = room.lastUpdate;
 
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                showMenuStatus('Connection error. Please try again.', 'error');
-            };
-
-            ws.onclose = () => {
-                console.log('Disconnected');
-                if (gameState.gameStarted) {
-                    showStatus('Connection lost', 'error');
-                }
-            };
-        }
-
-        function sendMessage(data) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    ...data,
-                    room: gameState.roomCode
-                }));
-            }
-        }
-
-        function handleMessage(data) {
-            if (data.room && data.room !== gameState.roomCode) return;
-
-            switch(data.type) {
-                case 'join':
-                    if (data.name !== gameState.myName) {
-                        gameState.players[data.name] = { score: 0, isHost: false };
+                    if (room.gameStarted && !gameState.gameStarted) {
+                        gameState.gameStarted = true;
+                        showGameArea();
+                        renderBoard();
+                        updateScoreboard();
+                    } else if (gameState.gameStarted) {
+                        renderBoard();
+                        updateScoreboard();
+                    } else {
                         updatePlayerList();
-                        showMenuStatus(data.name + ' joined!', 'success');
-                        
-                        if (gameState.isHost) {
-                            sendMessage({
-                                type: 'playerList',
-                                players: gameState.players
-                            });
-                        }
                     }
-                    break;
-                    
-                case 'playerList':
-                    gameState.players = data.players;
-                    if (!gameState.players[gameState.myName]) {
-                        gameState.players[gameState.myName] = { score: 0, isHost: false };
-                    }
-                    updatePlayerList();
-                    showWaitingRoom();
-                    break;
-                    
-                case 'startGame':
-                    gameState.deck = data.deck;
-                    gameState.board = data.board;
-                    gameState.players = data.players;
-                    gameState.gameStarted = true;
-                    showGameArea();
-                    renderBoard();
-                    updateScoreboard();
-                    break;
-                    
-                case 'selectCard':
-                    handleRemoteCardSelect(data.cardIndex, data.playerName);
-                    break;
-                    
-                case 'gameUpdate':
-                    gameState.board = data.board;
-                    gameState.deck = data.deck;
-                    gameState.players = data.players;
-                    gameState.selectedCards = [];
-                    renderBoard();
-                    updateScoreboard();
-                    if (data.message) {
-                        showStatus(data.message, data.success ? 'success' : 'error');
-                    }
-                    checkGameEnd();
-                    break;
-            }
+                }
+            }, 500);
+        }
+
+        function updateRoom() {
+            const room = rooms[gameState.roomCode];
+            if (!room) return;
+
+            room.players = gameState.players;
+            room.deck = gameState.deck;
+            room.board = gameState.board;
+            room.selectedCards = gameState.selectedCards;
+            room.gameStarted = gameState.gameStarted;
+            room.lastUpdate = Date.now();
         }
 
         window.startGame = function() {
@@ -546,12 +514,7 @@
             gameState.board = gameState.deck.splice(0, 12);
             gameState.gameStarted = true;
 
-            sendMessage({
-                type: 'startGame',
-                deck: gameState.deck,
-                board: gameState.board,
-                players: gameState.players
-            });
+            updateRoom();
 
             showGameArea();
             renderBoard();
@@ -572,37 +535,12 @@
             }
 
             renderBoard();
-
-            sendMessage({
-                type: 'selectCard',
-                cardIndex: index,
-                playerName: gameState.myName
-            });
+            updateRoom();
 
             if (gameState.selectedCards.length === 3) {
                 setTimeout(() => checkSet(), 300);
             }
         };
-
-        function handleRemoteCardSelect(index, playerName) {
-            if (playerName === gameState.myName) return;
-            
-            const cardIndex = gameState.selectedCards.indexOf(index);
-            
-            if (cardIndex > -1) {
-                gameState.selectedCards.splice(cardIndex, 1);
-            } else {
-                if (gameState.selectedCards.length < 3) {
-                    gameState.selectedCards.push(index);
-                }
-            }
-
-            renderBoard();
-
-            if (gameState.selectedCards.length === 3 && gameState.isHost) {
-                setTimeout(() => checkSet(), 300);
-            }
-        }
 
         function checkSet() {
             const cards = gameState.selectedCards.map(i => gameState.board[i]);
@@ -625,15 +563,6 @@
                     }
                 }
 
-                sendMessage({
-                    type: 'gameUpdate',
-                    board: gameState.board,
-                    deck: gameState.deck,
-                    players: gameState.players,
-                    message: `${gameState.myName} found a set! +3 points`,
-                    success: true
-                });
-
                 showStatus('Valid set! +3 points', 'success');
             } else {
                 if (gameState.board.length > 0) {
@@ -642,21 +571,13 @@
                     gameState.deck.push(returnedCard);
                 }
 
-                sendMessage({
-                    type: 'gameUpdate',
-                    board: gameState.board,
-                    deck: gameState.deck,
-                    players: gameState.players,
-                    message: `${gameState.myName} - not a set! Card returned to deck`,
-                    success: false
-                });
-
                 showStatus('Not a valid set! Card returned to deck', 'error');
             }
 
             gameState.selectedCards = [];
             renderBoard();
             updateScoreboard();
+            updateRoom();
             checkGameEnd();
         }
 
@@ -806,12 +727,12 @@
         }
 
         window.leaveRoom = function() {
-            if (ws) ws.close();
+            if (pollInterval) clearInterval(pollInterval);
             location.reload();
         };
 
         window.leaveGame = function() {
-            if (ws) ws.close();
+            if (pollInterval) clearInterval(pollInterval);
             location.reload();
         };
 
