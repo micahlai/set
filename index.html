@@ -389,8 +389,15 @@
             });
 
             peer.on('connection', (connection) => {
+                console.log('Incoming connection received from:', connection.peer);
                 connections.push(connection);
                 setupConnection(connection);
+                
+                // Send current player list once connection is established
+                connection.on('open', () => {
+                    console.log('Incoming connection opened');
+                    connection.send({ type: 'playerList', players: gameState.players });
+                });
             });
 
             peer.on('error', (err) => {
@@ -431,22 +438,40 @@
                 console.log('My peer ID:', peer.id);
                 console.log('Connecting to:', roomCode);
                 
-                conn = peer.connect(roomCode, {
-                    reliable: true
-                });
-                
-                setupConnection(conn);
-                
-                conn.on('open', () => {
-                    console.log('Connection opened');
-                    conn.send({ type: 'join', name: username });
-                    showMenuStatus('Connected! Waiting for host to start...', 'success');
-                });
+                // Add a small delay to ensure the peer is fully registered
+                setTimeout(() => {
+                    conn = peer.connect(roomCode, {
+                        reliable: true,
+                        serialization: 'json'
+                    });
+                    
+                    console.log('Connection object created');
+                    
+                    conn.on('open', () => {
+                        console.log('Connection opened successfully!');
+                        conn.send({ type: 'join', name: username });
+                        showMenuStatus('Connected! Waiting for host to start...', 'success');
+                    });
 
-                conn.on('error', (err) => {
-                    console.error('Connection error:', err);
-                    showMenuStatus('Connection error: ' + err.type, 'error');
-                });
+                    conn.on('error', (err) => {
+                        console.error('Connection error:', err);
+                        showMenuStatus('Connection error: ' + err.type, 'error');
+                    });
+                    
+                    conn.on('close', () => {
+                        console.log('Connection closed by remote peer');
+                    });
+                    
+                    setupConnection(conn);
+                    
+                    // Timeout if connection doesn't open in 10 seconds
+                    setTimeout(() => {
+                        if (!conn.open) {
+                            console.error('Connection timeout');
+                            showMenuStatus('Connection timeout. Room may not exist or host may be offline.', 'error');
+                        }
+                    }, 10000);
+                }, 500);
             });
 
             peer.on('error', (err) => {
@@ -460,24 +485,39 @@
         }
 
         function setupConnection(connection) {
+            console.log('Setting up connection...');
+            
+            connection.on('open', () => {
+                console.log('Connection fully opened');
+            });
+
             connection.on('data', (data) => {
+                console.log('Received data:', data);
                 handleMessage(data, connection);
             });
 
             connection.on('close', () => {
+                console.log('Connection closed');
                 if (gameState.gameStarted) {
                     showStatus('A player disconnected', 'error');
                 }
             });
+
+            connection.on('error', (err) => {
+                console.error('Connection error in setup:', err);
+            });
         }
 
         function handleMessage(data, connection) {
+            console.log('Handling message type:', data.type);
             switch(data.type) {
                 case 'join':
                     if (isHost) {
+                        console.log('Player joined:', data.name);
                         gameState.players[data.name] = { score: 0, isHost: false };
                         updatePlayerList();
                         broadcastToAll({ type: 'playerList', players: gameState.players });
+                        showMenuStatus(data.name + ' joined the room', 'success');
                     }
                     break;
                     
