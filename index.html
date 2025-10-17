@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Set Card Game - Online Multiplayer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.4.7/peerjs.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 1200px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+
+        .menu {
+            text-align: center;
+        }
+
+        .input-group {
+            margin: 20px 0;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        input {
+            width: 100%;
+            max-width: 400px;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin: 10px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .game-area {
+            display: none;
+        }
+
+        .game-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+
+        .scoreboard {
+            display: flex;
+            gap: 30px;
+        }
+
+        .player-score {
+            text-align: center;
+        }
+
+        .player-score .name {
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .player-score .score {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .cards-remaining {
+            font-size: 18px;
+            color: #666;
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .card {
+            aspect-ratio: 2/3;
+            border: 3px solid #ddd;
+            border-radius: 12px;
+            background: white;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 10px;
+            transition: all 0.3s;
+            position: relative;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+        }
+
+        .card.selected {
+            border-color: #667eea;
+            border-width: 4px;
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
+        }
+
+        .card svg {
+            width: 80%;
+            height: auto;
+            margin: 5px 0;
+        }
+
+        .status {
+            text-align: center;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .room-code {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        .room-code code {
+            background: #e9ecef;
+            padding: 5px 15px;
+            border-radius: 5px;
+            font-size: 18px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .players-waiting {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .player-list {
+            list-style: none;
+            padding: 10px 0;
+        }
+
+        .player-list li {
+            padding: 8px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 5px;
+            border-left: 4px solid #667eea;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+
+            .game-info {
+                flex-direction: column;
+                gap: 15px;
+            }
+
+            .board {
+                grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎴 Set Card Game</h1>
+        
+        <div id="menu" class="menu">
+            <div class="input-group">
+                <label for="username">Your Username:</label>
+                <input type="text" id="username" placeholder="Enter your name" maxlength="20">
+            </div>
+            
+            <button onclick="createRoom()">Create New Room</button>
+            
+            <div class="input-group" style="margin-top: 30px;">
+                <label for="roomCode">Or Join Existing Room:</label>
+                <input type="text" id="roomCode" placeholder="Enter room code" maxlength="20">
+            </div>
+            
+            <button onclick="joinRoom()">Join Room</button>
+            
+            <div id="menuStatus" class="status" style="display:none;"></div>
+        </div>
+
+        <div id="waitingRoom" style="display:none;">
+            <div class="room-code">
+                <p>Room Code:</p>
+                <code id="displayRoomCode"></code>
+                <p style="margin-top: 10px; color: #666;">Share this code with other players!</p>
+            </div>
+            
+            <div class="players-waiting">
+                <h3>Players in Room:</h3>
+                <ul id="playerList" class="player-list"></ul>
+            </div>
+            
+            <button onclick="startGame()" id="startButton">Start Game</button>
+            <button onclick="leaveRoom()">Leave Room</button>
+        </div>
+
+        <div id="gameArea" class="game-area">
+            <div class="game-info">
+                <div class="scoreboard" id="scoreboard"></div>
+                <div class="cards-remaining">
+                    Cards in deck: <span id="cardsRemaining">69</span>
+                </div>
+            </div>
+            
+            <div id="status" class="status" style="display:none;"></div>
+            
+            <div id="board" class="board"></div>
+            
+            <button onclick="leaveGame()">Leave Game</button>
+        </div>
+    </div>
+
+    <script>
+        // Game state
+        let peer;
+        let conn;
+        let connections = [];
+        let isHost = false;
+        let gameState = {
+            deck: [],
+            board: [],
+            players: {},
+            selectedCards: [],
+            myName: '',
+            roomCode: '',
+            gameStarted: false
+        };
+
+        // Card generation
+        const numbers = [1, 2, 3];
+        const shapes = ['oval', 'squiggle', 'diamond'];
+        const colors = ['red', 'green', 'purple'];
+        const shadings = ['solid', 'striped', 'open'];
+
+        function generateDeck() {
+            const deck = [];
+            for (let num of numbers) {
+                for (let shape of shapes) {
+                    for (let color of colors) {
+                        for (let shading of shadings) {
+                            deck.push({ number: num, shape, color, shading });
+                        }
+                    }
+                }
+            }
+            return shuffle(deck);
+        }
+
+        function shuffle(array) {
+            const arr = [...array];
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
+
+        function createRoom() {
+            const username = document.getElementById('username').value.trim();
+            if (!username) {
+                showMenuStatus('Please enter a username', 'error');
+                return;
+            }
+
+            gameState.myName = username;
+            isHost = true;
+            
+            peer = new Peer();
+            
+            peer.on('open', (id) => {
+                gameState.roomCode = id.substring(0, 8);
+                gameState.players[gameState.myName] = { score: 0, isHost: true };
+                
+                showWaitingRoom();
+                showMenuStatus('Room created! Waiting for players...', 'success');
+            });
+
+            peer.on('connection', (connection) => {
+                connections.push(connection);
+                setupConnection(connection);
+            });
+
+            peer.on('error', (err) => {
+                showMenuStatus('Error creating room: ' + err.message, 'error');
+            });
+        }
+
+        function joinRoom() {
+            const username = document.getElementById('username').value.trim();
+            const roomCode = document.getElementById('roomCode').value.trim();
+            
+            if (!username || !roomCode) {
+                showMenuStatus('Please enter username and room code', 'error');
+                return;
+            }
+
+            gameState.myName = username;
+            gameState.roomCode = roomCode;
+            
+            peer = new Peer();
+            
+            peer.on('open', () => {
+                conn = peer.connect(roomCode);
+                setupConnection(conn);
+                
+                conn.on('open', () => {
+                    conn.send({ type: 'join', name: username });
+                    showMenuStatus('Connecting...', 'info');
+                });
+            });
+
+            peer.on('error', (err) => {
+                showMenuStatus('Error joining room: ' + err.message, 'error');
+            });
+        }
+
+        function setupConnection(connection) {
+            connection.on('data', (data) => {
+                handleMessage(data, connection);
+            });
+
+            connection.on('close', () => {
+                if (gameState.gameStarted) {
+                    showStatus('A player disconnected', 'error');
+                }
+            });
+        }
+
+        function handleMessage(data, connection) {
+            switch(data.type) {
+                case 'join':
+                    if (isHost) {
+                        gameState.players[data.name] = { score: 0, isHost: false };
+                        updatePlayerList();
+                        broadcastToAll({ type: 'playerList', players: gameState.players });
+                    }
+                    break;
+                    
+                case 'playerList':
+                    gameState.players = data.players;
+                    updatePlayerList();
+                    showWaitingRoom();
+                    break;
+                    
+                case 'startGame':
+                    gameState.deck = data.deck;
+                    gameState.board = data.board;
+                    gameState.players = data.players;
+                    gameState.gameStarted = true;
+                    showGameArea();
+                    renderBoard();
+                    updateScoreboard();
+                    break;
+                    
+                case 'selectCard':
+                    handleRemoteCardSelect(data.cardIndex, data.playerName);
+                    break;
+                    
+                case 'gameUpdate':
+                    gameState.board = data.board;
+                    gameState.deck = data.deck;
+                    gameState.players = data.players;
+                    gameState.selectedCards = [];
+                    renderBoard();
+                    updateScoreboard();
+                    if (data.message) {
+                        showStatus(data.message, data.success ? 'success' : 'error');
+                    }
+                    checkGameEnd();
+                    break;
+            }
+        }
+
+        function broadcastToAll(message) {
+            connections.forEach(conn => {
+                if (conn.open) {
+                    conn.send(message);
+                }
+            });
+        }
+
+        function startGame() {
+            if (Object.keys(gameState.players).length < 1) {
+                showMenuStatus('Need at least 1 player to start', 'error');
+                return;
+            }
+
+            gameState.deck = generateDeck();
+            gameState.board = gameState.deck.splice(0, 12);
+            gameState.gameStarted = true;
+
+            broadcastToAll({
+                type: 'startGame',
+                deck: gameState.deck,
+                board: gameState.board,
+                players: gameState.players
+            });
+
+            showGameArea();
+            renderBoard();
+            updateScoreboard();
+        }
+
+        function selectCard(index) {
+            if (!gameState.gameStarted) return;
+            
+            const cardIndex = gameState.selectedCards.indexOf(index);
+            
+            if (cardIndex > -1) {
+                gameState.selectedCards.splice(cardIndex, 1);
+            } else {
+                if (gameState.selectedCards.length < 3) {
+                    gameState.selectedCards.push(index);
+                }
+            }
+
+            renderBoard();
+
+            if (isHost) {
+                broadcastToAll({
+                    type: 'selectCard',
+                    cardIndex: index,
+                    playerName: gameState.myName
+                });
+            } else if (conn && conn.open) {
+                conn.send({
+                    type: 'selectCard',
+                    cardIndex: index,
+                    playerName: gameState.myName
+                });
+            }
+
+            if (gameState.selectedCards.length === 3) {
+                setTimeout(() => checkSet(), 300);
+            }
+        }
+
+        function handleRemoteCardSelect(index, playerName) {
+            if (playerName === gameState.myName) return;
+            
+            // Only host processes set checking
+            if (isHost) {
+                const cardIndex = gameState.selectedCards.indexOf(index);
+                
+                if (cardIndex > -1) {
+                    gameState.selectedCards.splice(cardIndex, 1);
+                } else {
+                    if (gameState.selectedCards.length < 3) {
+                        gameState.selectedCards.push(index);
+                    }
+                }
+
+                if (gameState.selectedCards.length === 3) {
+                    checkSet();
+                } else {
+                    renderBoard();
+                }
+            }
+        }
+
+        function checkSet() {
+            const cards = gameState.selectedCards.map(i => gameState.board[i]);
+            
+            const isValidSet = 
+                checkAttribute(cards, 'number') &&
+                checkAttribute(cards, 'shape') &&
+                checkAttribute(cards, 'color') &&
+                checkAttribute(cards, 'shading');
+
+            if (isValidSet) {
+                gameState.players[gameState.myName].score += 3;
+                
+                // Replace cards
+                gameState.selectedCards.sort((a, b) => b - a);
+                for (let index of gameState.selectedCards) {
+                    if (gameState.deck.length > 0) {
+                        gameState.board[index] = gameState.deck.pop();
+                    } else {
+                        gameState.board.splice(index, 1);
+                    }
+                }
+
+                if (isHost) {
+                    broadcastToAll({
+                        type: 'gameUpdate',
+                        board: gameState.board,
+                        deck: gameState.deck,
+                        players: gameState.players,
+                        message: `${gameState.myName} found a set! +3 points`,
+                        success: true
+                    });
+                } else if (conn && conn.open) {
+                    conn.send({
+                        type: 'gameUpdate',
+                        board: gameState.board,
+                        deck: gameState.deck,
+                        players: gameState.players,
+                        message: `${gameState.myName} found a set! +3 points`,
+                        success: true
+                    });
+                }
+
+                showStatus('Valid set! +3 points', 'success');
+            } else {
+                // Invalid set - return one card to deck
+                if (gameState.board.length > 0) {
+                    const returnIndex = Math.floor(Math.random() * gameState.board.length);
+                    const returnedCard = gameState.board.splice(returnIndex, 1)[0];
+                    gameState.deck.push(returnedCard);
+                }
+
+                if (isHost) {
+                    broadcastToAll({
+                        type: 'gameUpdate',
+                        board: gameState.board,
+                        deck: gameState.deck,
+                        players: gameState.players,
+                        message: `${gameState.myName} - not a set! Card returned to deck`,
+                        success: false
+                    });
+                } else if (conn && conn.open) {
+                    conn.send({
+                        type: 'gameUpdate',
+                        board: gameState.board,
+                        deck: gameState.deck,
+                        players: gameState.players,
+                        message: `${gameState.myName} - not a set! Card returned to deck`,
+                        success: false
+                    });
+                }
+
+                showStatus('Not a valid set! Card returned to deck', 'error');
+            }
+
+            gameState.selectedCards = [];
+            renderBoard();
+            updateScoreboard();
+            checkGameEnd();
+        }
+
+        function checkAttribute(cards, attr) {
+            const values = cards.map(c => c[attr]);
+            const allSame = values.every(v => v === values[0]);
+            const allDifferent = new Set(values).size === 3;
+            return allSame || allDifferent;
+        }
+
+        function checkGameEnd() {
+            if (gameState.deck.length === 0 && gameState.board.length === 0) {
+                const winner = Object.entries(gameState.players)
+                    .sort((a, b) => b[1].score - a[1].score)[0];
+                showStatus(`Game Over! ${winner[0]} wins with ${winner[1].score} points!`, 'success');
+            }
+        }
+
+        function renderBoard() {
+            const board = document.getElementById('board');
+            board.innerHTML = '';
+            
+            gameState.board.forEach((card, index) => {
+                const cardEl = document.createElement('div');
+                cardEl.className = 'card';
+                if (gameState.selectedCards.includes(index)) {
+                    cardEl.classList.add('selected');
+                }
+                cardEl.onclick = () => selectCard(index);
+                
+                for (let i = 0; i < card.number; i++) {
+                    cardEl.appendChild(createShape(card.shape, card.color, card.shading));
+                }
+                
+                board.appendChild(cardEl);
+            });
+
+            document.getElementById('cardsRemaining').textContent = gameState.deck.length;
+        }
+
+        function createShape(shape, color, shading) {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('viewBox', '0 0 100 50');
+            svg.style.width = '100%';
+            svg.style.height = 'auto';
+
+            let path;
+            if (shape === 'oval') {
+                path = 'M 10 25 Q 10 10 25 10 L 75 10 Q 90 10 90 25 Q 90 40 75 40 L 25 40 Q 10 40 10 25';
+            } else if (shape === 'diamond') {
+                path = 'M 50 5 L 90 25 L 50 45 L 10 25 Z';
+            } else { // squiggle
+                path = 'M 20 25 Q 20 10 35 15 Q 50 20 65 10 Q 80 5 80 20 Q 80 35 65 30 Q 50 25 35 35 Q 20 40 20 25';
+            }
+
+            const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            pathEl.setAttribute('d', path);
+            pathEl.setAttribute('stroke', color);
+            pathEl.setAttribute('stroke-width', '2');
+
+            if (shading === 'solid') {
+                pathEl.setAttribute('fill', color);
+            } else if (shading === 'striped') {
+                const pattern = document.createElementNS('http://www.w3.org/2000/svg', 'pattern');
+                const patternId = `stripe-${shape}-${color}-${Math.random()}`;
+                pattern.setAttribute('id', patternId);
+                pattern.setAttribute('patternUnits', 'userSpaceOnUse');
+                pattern.setAttribute('width', '4');
+                pattern.setAttribute('height', '4');
+                
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', '0');
+                line.setAttribute('y1', '0');
+                line.setAttribute('x2', '0');
+                line.setAttribute('y2', '4');
+                line.setAttribute('stroke', color);
+                line.setAttribute('stroke-width', '1');
+                
+                pattern.appendChild(line);
+                svg.appendChild(pattern);
+                pathEl.setAttribute('fill', `url(#${patternId})`);
+            } else { // open
+                pathEl.setAttribute('fill', 'none');
+            }
+
+            svg.appendChild(pathEl);
+            return svg;
+        }
+
+        function updateScoreboard() {
+            const scoreboard = document.getElementById('scoreboard');
+            scoreboard.innerHTML = '';
+            
+            Object.entries(gameState.players).forEach(([name, data]) => {
+                const playerDiv = document.createElement('div');
+                playerDiv.className = 'player-score';
+                playerDiv.innerHTML = `
+                    <div class="name">${name}${name === gameState.myName ? ' (You)' : ''}</div>
+                    <div class="score">${data.score}</div>
+                `;
+                scoreboard.appendChild(playerDiv);
+            });
+        }
+
+        function updatePlayerList() {
+            const list = document.getElementById('playerList');
+            list.innerHTML = '';
+            
+            Object.keys(gameState.players).forEach(name => {
+                const li = document.createElement('li');
+                li.textContent = name + (name === gameState.myName ? ' (You)' : '');
+                list.appendChild(li);
+            });
+        }
+
+        function showWaitingRoom() {
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('waitingRoom').style.display = 'block';
+            document.getElementById('displayRoomCode').textContent = gameState.roomCode;
+            updatePlayerList();
+            
+            if (!isHost) {
+                document.getElementById('startButton').style.display = 'none';
+            }
+        }
+
+        function showGameArea() {
+            document.getElementById('menu').style.display = 'none';
+            document.getElementById('waitingRoom').style.display = 'none';
+            document.getElementById('gameArea').style.display = 'block';
+        }
+
+        function showMenuStatus(message, type) {
+            const status = document.getElementById('menuStatus');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            setTimeout(() => status.style.display = 'none', 3000);
+        }
+
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            setTimeout(() => status.style.display = 'none', 3000);
+        }
+
+        function leaveRoom() {
+            location.reload();
+        }
+
+        function leaveGame() {
+            location.reload();
+        }
+    </script>
+</body>
+</html>
