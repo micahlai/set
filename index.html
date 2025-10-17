@@ -344,8 +344,9 @@
     </div>
 
     <script type="module">
-        // Simple polling-based multiplayer using JSONPlaceholder-style free API
-        // This works everywhere without any setup or blocked services
+        // Backend API configuration
+        // REPLACE THIS URL with your Railway deployment URL after deploying
+        const API_URL = 'https://your-app-name.up.railway.app';
         
         let pollInterval;
         let gameState = {
@@ -359,10 +360,6 @@
             isHost: false,
             lastUpdate: Date.now()
         };
-
-        // In-memory storage simulation using a free pastebin-like service
-        const API_BASE = 'https://api.jsonstorage.net/v1/json';
-        let storageId = null;
 
         const numbers = [1, 2, 3];
         const shapes = ['oval', 'squiggle', 'diamond'];
@@ -403,9 +400,74 @@
 
         // Simplified local-only multiplayer for demo
         // For a production version, you'd need to set up your own backend
-        let rooms = {};
 
-        window.createRoom = function() {
+        async function createRoomOnServer() {
+            const roomData = {
+                players: gameState.players,
+                gameStarted: false,
+                deck: [],
+                board: [],
+                selectedCards: [],
+                lastUpdate: Date.now()
+            };
+
+            try {
+                const response = await fetch(`${API_URL}/room/${gameState.roomCode}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(roomData)
+                });
+                return response.ok;
+            } catch (error) {
+                console.error('Error creating room:', error);
+                return false;
+            }
+        }
+
+        async function updateRoomOnServer() {
+            const roomData = {
+                players: gameState.players,
+                gameStarted: gameState.gameStarted,
+                deck: gameState.deck,
+                board: gameState.board,
+                selectedCards: gameState.selectedCards,
+                lastUpdate: Date.now()
+            };
+
+            try {
+                await fetch(`${API_URL}/room/${gameState.roomCode}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(roomData)
+                });
+            } catch (error) {
+                console.error('Error updating room:', error);
+            }
+        }
+
+        async function getRoomFromServer() {
+            try {
+                const response = await fetch(`${API_URL}/room/${gameState.roomCode}`);
+                if (!response.ok) return null;
+                return await response.json();
+            } catch (error) {
+                console.error('Error fetching room:', error);
+                return null;
+            }
+        }
+
+        async function checkRoomExists() {
+            try {
+                const response = await fetch(`${API_URL}/room/${gameState.roomCode}/exists`);
+                const data = await response.json();
+                return data.exists;
+            } catch (error) {
+                console.error('Error checking room:', error);
+                return false;
+            }
+        }
+
+        window.createRoom = async function() {
             const username = document.getElementById('username').value.trim();
             if (!username) {
                 showMenuStatus('Please enter a username', 'error');
@@ -417,21 +479,19 @@
             gameState.roomCode = generateRoomCode();
             gameState.players[username] = { score: 0, isHost: true };
 
-            // Store in global rooms object (this simulates a server)
-            rooms[gameState.roomCode] = {
-                players: gameState.players,
-                gameStarted: false,
-                deck: [],
-                board: [],
-                selectedCards: [],
-                lastUpdate: Date.now()
-            };
+            showMenuStatus('Creating room...', 'info');
+
+            const success = await createRoomOnServer();
+            if (!success) {
+                showMenuStatus('Error creating room. Make sure backend is running.', 'error');
+                return;
+            }
 
             showWaitingRoom();
             startPolling();
         };
 
-        window.joinRoom = function() {
+        window.joinRoom = async function() {
             const username = document.getElementById('username').value.trim();
             const roomCode = document.getElementById('roomCode').value.trim().toUpperCase();
             
@@ -445,39 +505,61 @@
                 return;
             }
 
-            if (!rooms[roomCode]) {
-                showMenuStatus('Room not found. Make sure the host created it first.', 'error');
+            showMenuStatus('Joining room...', 'info');
+
+            gameState.roomCode = roomCode;
+            
+            const exists = await checkRoomExists();
+            if (!exists) {
+                showMenuStatus('Room not found. Check the code and try again.', 'error');
+                return;
+            }
+
+            const roomData = await getRoomFromServer();
+            if (!roomData) {
+                showMenuStatus('Error joining room.', 'error');
                 return;
             }
 
             gameState.myName = username;
-            gameState.roomCode = roomCode;
             gameState.isHost = false;
+            
+            roomData.players[username] = { score: 0, isHost: false };
+            roomData.lastUpdate = Date.now();
+            
+            gameState.players = roomData.players;
+            gameState.deck = roomData.deck;
+            gameState.board = roomData.board;
+            gameState.selectedCards = roomData.selectedCards || [];
+            gameState.gameStarted = roomData.gameStarted;
 
-            // Join the room
-            rooms[roomCode].players[username] = { score: 0, isHost: false };
-            rooms[roomCode].lastUpdate = Date.now();
+            await updateRoomOnServer();
             
-            gameState.players = rooms[roomCode].players;
+            if (gameState.gameStarted) {
+                showGameArea();
+                renderBoard();
+                updateScoreboard();
+            } else {
+                showWaitingRoom();
+            }
             
-            showWaitingRoom();
             startPolling();
         };
 
         function startPolling() {
-            pollInterval = setInterval(() => {
-                const room = rooms[gameState.roomCode];
-                if (!room) return;
+            pollInterval = setInterval(async () => {
+                const roomData = await getRoomFromServer();
+                if (!roomData) return;
 
                 // Sync game state
-                if (room.lastUpdate > gameState.lastUpdate) {
-                    gameState.players = room.players;
-                    gameState.deck = room.deck;
-                    gameState.board = room.board;
-                    gameState.selectedCards = room.selectedCards || [];
-                    gameState.lastUpdate = room.lastUpdate;
+                if (roomData.lastUpdate > gameState.lastUpdate) {
+                    gameState.players = roomData.players;
+                    gameState.deck = roomData.deck;
+                    gameState.board = roomData.board;
+                    gameState.selectedCards = roomData.selectedCards || [];
+                    gameState.lastUpdate = roomData.lastUpdate;
 
-                    if (room.gameStarted && !gameState.gameStarted) {
+                    if (roomData.gameStarted && !gameState.gameStarted) {
                         gameState.gameStarted = true;
                         showGameArea();
                         renderBoard();
@@ -489,19 +571,11 @@
                         updatePlayerList();
                     }
                 }
-            }, 500);
+            }, 1000); // Poll every second
         }
 
-        function updateRoom() {
-            const room = rooms[gameState.roomCode];
-            if (!room) return;
-
-            room.players = gameState.players;
-            room.deck = gameState.deck;
-            room.board = gameState.board;
-            room.selectedCards = gameState.selectedCards;
-            room.gameStarted = gameState.gameStarted;
-            room.lastUpdate = Date.now();
+        async function updateRoom() {
+            await updateRoomOnServer();
         }
 
         window.startGame = function() {
