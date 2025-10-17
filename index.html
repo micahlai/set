@@ -212,6 +212,31 @@
             font-size: 18px;
             font-weight: bold;
             color: #667eea;
+            display: inline-block;
+            word-break: break-all;
+            cursor: pointer;
+            user-select: all;
+        }
+
+        .room-code code:hover {
+            background: #dee2e6;
+        }
+
+        .connection-status {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .connection-status.online {
+            background: #28a745;
+            box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
+        }
+
+        .connection-status.offline {
+            background: #dc3545;
         }
 
         .players-waiting {
@@ -279,9 +304,12 @@
 
         <div id="waitingRoom" style="display:none;">
             <div class="room-code">
-                <p>Room Code:</p>
-                <code id="displayRoomCode"></code>
-                <p style="margin-top: 10px; color: #666;">Share this code with other players!</p>
+                <p><span class="connection-status online"></span>Room is Active</p>
+                <p style="margin: 10px 0;">Room Code (click to select all):</p>
+                <code id="displayRoomCode" onclick="selectRoomCode()"></code>
+                <p style="margin-top: 10px; color: #666; font-size: 14px;">
+                    ⚠️ Keep this tab open! If you close it, the room will be destroyed.
+                </p>
             </div>
             
             <div class="players-waiting">
@@ -875,6 +903,32 @@
         function leaveGame() {
             location.reload();
         }
+
+        function selectRoomCode() {
+            const code = document.getElementById('displayRoomCode');
+            const range = document.createRange();
+            range.selectNodeContents(code);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            
+            // Try to copy to clipboard
+            try {
+                document.execCommand('copy');
+                showMenuStatus('Room code copied to clipboard!', 'success');
+            } catch (err) {
+                console.log('Copy failed, but text is selected');
+            }
+        }
+
+        // Warn user if they try to close the tab while hosting
+        window.addEventListener('beforeunload', (e) => {
+            if (isHost && gameState.gameStarted) {
+                e.preventDefault();
+                e.returnValue = '';
+                return '';
+            }
+        });
     </script>
 </body>
 </html>
