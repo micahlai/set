@@ -137,13 +137,17 @@
 
         .board {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            grid-template-columns: repeat(6, 1fr);
             gap: 15px;
             margin: 20px 0;
+            max-width: 1000px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
         .card {
             aspect-ratio: 2/3;
+            width: 100%;
             border: 3px solid #ddd;
             border-radius: 12px;
             background: white;
@@ -166,6 +170,20 @@
             border-color: #667eea;
             border-width: 4px;
             box-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
+        }
+
+        .card.correct-set {
+            border-color: #28a745;
+            border-width: 4px;
+            background: #d4edda;
+            box-shadow: 0 0 20px rgba(40, 167, 69, 0.5);
+        }
+
+        .card.incorrect-set {
+            border-color: #dc3545;
+            border-width: 4px;
+            background: #f8d7da;
+            box-shadow: 0 0 20px rgba(220, 53, 69, 0.5);
         }
 
         .card svg {
@@ -336,6 +354,7 @@
             </div>
             
             <div id="status" class="status" style="display:none;"></div>
+            <div id="timerWarning" class="timer-warning" style="display:none;">No sets found! Adding a card...</div>
             
             <div id="board" class="board"></div>
             
@@ -346,9 +365,12 @@
     <script type="module">
         // Backend API configuration
         // REPLACE THIS URL with your Railway deployment URL after deploying
-        const API_URL = 'https://set-production-c246.up.railway.app';
+        const API_URL = 'https://your-app-name.up.railway.app';
         
         let pollInterval;
+        let noSetTimer;
+        let lastBoardChangeTime = Date.now();
+        
         let gameState = {
             deck: [],
             board: [],
@@ -358,7 +380,9 @@
             roomCode: '',
             gameStarted: false,
             isHost: false,
-            lastUpdate: Date.now()
+            lastUpdate: Date.now(),
+            highlightedCards: [],
+            highlightType: null
         };
 
         const numbers = [1, 2, 3];
@@ -408,7 +432,10 @@
                 deck: [],
                 board: [],
                 selectedCards: [],
-                lastUpdate: Date.now()
+                lastUpdate: Date.now(),
+                highlightedCards: [],
+                highlightType: null,
+                lastBoardChangeTime: Date.now()
             };
 
             try {
@@ -430,8 +457,11 @@
                 gameStarted: gameState.gameStarted,
                 deck: gameState.deck,
                 board: gameState.board,
-                selectedCards: gameState.selectedCards,
-                lastUpdate: Date.now()
+                selectedCards: [],
+                lastUpdate: Date.now(),
+                highlightedCards: gameState.highlightedCards,
+                highlightType: gameState.highlightType,
+                lastBoardChangeTime: gameState.lastBoardChangeTime
             };
 
             try {
@@ -556,7 +586,9 @@
                     gameState.players = roomData.players;
                     gameState.deck = roomData.deck;
                     gameState.board = roomData.board;
-                    gameState.selectedCards = roomData.selectedCards || [];
+                    gameState.highlightedCards = roomData.highlightedCards || [];
+                    gameState.highlightType = roomData.highlightType;
+                    gameState.lastBoardChangeTime = roomData.lastBoardChangeTime || Date.now();
                     gameState.lastUpdate = roomData.lastUpdate;
 
                     if (roomData.gameStarted && !gameState.gameStarted) {
@@ -564,6 +596,7 @@
                         showGameArea();
                         renderBoard();
                         updateScoreboard();
+                        startNoSetTimer();
                     } else if (gameState.gameStarted) {
                         renderBoard();
                         updateScoreboard();
@@ -578,6 +611,37 @@
             await updateRoomOnServer();
         }
 
+        function startNoSetTimer() {
+            if (noSetTimer) clearInterval(noSetTimer);
+            
+            noSetTimer = setInterval(() => {
+                if (!gameState.gameStarted) return;
+                
+                const timeSinceLastChange = Date.now() - gameState.lastBoardChangeTime;
+                
+                if (timeSinceLastChange > 15000 && gameState.deck.length > 0) {
+                    // Add a card if no set found in 15 seconds
+                    if (gameState.isHost) {
+                        const newCard = gameState.deck.pop();
+                        gameState.board.push(newCard);
+                        gameState.lastBoardChangeTime = Date.now();
+                        
+                        showTimerWarning();
+                        updateRoom();
+                        renderBoard();
+                    }
+                }
+            }, 1000);
+        }
+
+        function showTimerWarning() {
+            const warning = document.getElementById('timerWarning');
+            warning.style.display = 'block';
+            setTimeout(() => {
+                warning.style.display = 'none';
+            }, 2000);
+        }
+
         window.startGame = function() {
             if (Object.keys(gameState.players).length < 1) {
                 showMenuStatus('Need at least 1 player to start', 'error');
@@ -587,12 +651,14 @@
             gameState.deck = generateDeck();
             gameState.board = gameState.deck.splice(0, 12);
             gameState.gameStarted = true;
+            gameState.lastBoardChangeTime = Date.now();
 
             updateRoom();
 
             showGameArea();
             renderBoard();
             updateScoreboard();
+            startNoSetTimer();
         };
 
         window.selectCard = function(index) {
@@ -626,33 +692,57 @@
                 checkAttribute(cards, 'shading');
 
             if (isValidSet) {
-                gameState.players[gameState.myName].score += 3;
-                
-                gameState.selectedCards.sort((a, b) => b - a);
-                for (let index of gameState.selectedCards) {
-                    if (gameState.deck.length > 0) {
-                        gameState.board[index] = gameState.deck.pop();
-                    } else {
-                        gameState.board.splice(index, 1);
+                // Highlight in green
+                gameState.highlightedCards = [...gameState.selectedCards];
+                gameState.highlightType = 'correct';
+                renderBoard();
+                updateRoom();
+
+                // Wait 1.5 seconds then remove cards
+                setTimeout(() => {
+                    gameState.players[gameState.myName].score += 3;
+                    
+                    // Remove the highlighted cards and replace with new ones
+                    gameState.selectedCards.sort((a, b) => b - a);
+                    for (let index of gameState.selectedCards) {
+                        if (gameState.deck.length > 0 && gameState.board.length <= 12) {
+                            gameState.board[index] = gameState.deck.pop();
+                        } else {
+                            gameState.board.splice(index, 1);
+                        }
                     }
-                }
 
-                showStatus('Valid set! +3 points', 'success');
+                    gameState.selectedCards = [];
+                    gameState.highlightedCards = [];
+                    gameState.highlightType = null;
+                    gameState.lastBoardChangeTime = Date.now();
+                    
+                    updateRoom();
+                    renderBoard();
+                    updateScoreboard();
+                    checkGameEnd();
+                }, 1500);
+
+                showStatus(`${gameState.myName} found a set! +3 points`, 'success');
             } else {
-                if (gameState.board.length > 0) {
-                    const returnIndex = Math.floor(Math.random() * gameState.board.length);
-                    const returnedCard = gameState.board.splice(returnIndex, 1)[0];
-                    gameState.deck.push(returnedCard);
-                }
+                // Highlight in red
+                gameState.highlightedCards = [...gameState.selectedCards];
+                gameState.highlightType = 'incorrect';
+                renderBoard();
+                updateRoom();
 
-                showStatus('Not a valid set! Card returned to deck', 'error');
+                // Wait 1.5 seconds then clear
+                setTimeout(() => {
+                    gameState.selectedCards = [];
+                    gameState.highlightedCards = [];
+                    gameState.highlightType = null;
+                    
+                    updateRoom();
+                    renderBoard();
+                }, 1500);
+
+                showStatus('Not a valid set!', 'error');
             }
-
-            gameState.selectedCards = [];
-            renderBoard();
-            updateScoreboard();
-            updateRoom();
-            checkGameEnd();
         }
 
         function checkAttribute(cards, attr) {
@@ -677,9 +767,20 @@
             gameState.board.forEach((card, index) => {
                 const cardEl = document.createElement('div');
                 cardEl.className = 'card';
-                if (gameState.selectedCards.includes(index)) {
+                
+                // Show highlights for everyone
+                if (gameState.highlightedCards.includes(index)) {
+                    if (gameState.highlightType === 'correct') {
+                        cardEl.classList.add('correct-set');
+                    } else if (gameState.highlightType === 'incorrect') {
+                        cardEl.classList.add('incorrect-set');
+                    }
+                }
+                // Only show selection for current player
+                else if (gameState.selectedCards.includes(index)) {
                     cardEl.classList.add('selected');
                 }
+                
                 cardEl.onclick = () => window.selectCard(index);
                 
                 for (let i = 0; i < card.number; i++) {
@@ -802,11 +903,13 @@
 
         window.leaveRoom = function() {
             if (pollInterval) clearInterval(pollInterval);
+            if (noSetTimer) clearInterval(noSetTimer);
             location.reload();
         };
 
         window.leaveGame = function() {
             if (pollInterval) clearInterval(pollInterval);
+            if (noSetTimer) clearInterval(noSetTimer);
             location.reload();
         };
 
