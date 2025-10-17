@@ -364,14 +364,28 @@
             gameState.myName = username;
             isHost = true;
             
-            peer = new Peer();
+            showMenuStatus('Creating room...', 'info');
+            
+            // Use PeerJS cloud server with explicit configuration
+            peer = new Peer(undefined, {
+                host: '0.peerjs.com',
+                port: 443,
+                path: '/',
+                secure: true,
+                config: {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
+                }
+            });
             
             peer.on('open', (id) => {
-                gameState.roomCode = id.substring(0, 8);
+                gameState.roomCode = id;
                 gameState.players[gameState.myName] = { score: 0, isHost: true };
                 
                 showWaitingRoom();
-                showMenuStatus('Room created! Waiting for players...', 'success');
+                showMenuStatus('Room created! Share the room code with players.', 'success');
             });
 
             peer.on('connection', (connection) => {
@@ -380,7 +394,8 @@
             });
 
             peer.on('error', (err) => {
-                showMenuStatus('Error creating room: ' + err.message, 'error');
+                console.error('Peer error:', err);
+                showMenuStatus('Error creating room: ' + err.type + '. Please try again.', 'error');
             });
         }
 
@@ -396,20 +411,51 @@
             gameState.myName = username;
             gameState.roomCode = roomCode;
             
-            peer = new Peer();
+            showMenuStatus('Connecting to room...', 'info');
+            
+            // Use PeerJS cloud server with explicit configuration
+            peer = new Peer(undefined, {
+                host: '0.peerjs.com',
+                port: 443,
+                path: '/',
+                secure: true,
+                config: {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
+                }
+            });
             
             peer.on('open', () => {
-                conn = peer.connect(roomCode);
+                console.log('My peer ID:', peer.id);
+                console.log('Connecting to:', roomCode);
+                
+                conn = peer.connect(roomCode, {
+                    reliable: true
+                });
+                
                 setupConnection(conn);
                 
                 conn.on('open', () => {
+                    console.log('Connection opened');
                     conn.send({ type: 'join', name: username });
-                    showMenuStatus('Connecting...', 'info');
+                    showMenuStatus('Connected! Waiting for host to start...', 'success');
+                });
+
+                conn.on('error', (err) => {
+                    console.error('Connection error:', err);
+                    showMenuStatus('Connection error: ' + err.type, 'error');
                 });
             });
 
             peer.on('error', (err) => {
-                showMenuStatus('Error joining room: ' + err.message, 'error');
+                console.error('Peer error:', err);
+                if (err.type === 'peer-unavailable') {
+                    showMenuStatus('Room not found. Please check the room code.', 'error');
+                } else {
+                    showMenuStatus('Error: ' + err.type + '. Please try again.', 'error');
+                }
             });
         }
 
