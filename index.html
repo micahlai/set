@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Set Card Game - Online Multiplayer</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.4.7/peerjs.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -112,6 +111,7 @@
         .scoreboard {
             display: flex;
             gap: 30px;
+            flex-wrap: wrap;
         }
 
         .player-score {
@@ -209,13 +209,13 @@
             background: #e9ecef;
             padding: 5px 15px;
             border-radius: 5px;
-            font-size: 18px;
+            font-size: 24px;
             font-weight: bold;
             color: #667eea;
             display: inline-block;
-            word-break: break-all;
             cursor: pointer;
             user-select: all;
+            letter-spacing: 3px;
         }
 
         .room-code code:hover {
@@ -233,10 +233,12 @@
         .connection-status.online {
             background: #28a745;
             box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
+            animation: pulse 2s infinite;
         }
 
-        .connection-status.offline {
-            background: #dc3545;
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
 
         .players-waiting {
@@ -294,7 +296,7 @@
             
             <div class="input-group" style="margin-top: 30px;">
                 <label for="roomCode">Or Join Existing Room:</label>
-                <input type="text" id="roomCode" placeholder="Enter room code" maxlength="40">
+                <input type="text" id="roomCode" placeholder="Enter 6-digit code" maxlength="6" style="text-transform: uppercase;">
             </div>
             
             <button onclick="joinRoom()">Join Room</button>
@@ -305,10 +307,10 @@
         <div id="waitingRoom" style="display:none;">
             <div class="room-code">
                 <p><span class="connection-status online"></span>Room is Active</p>
-                <p style="margin: 10px 0;">Room Code (click to select all):</p>
-                <code id="displayRoomCode" onclick="selectRoomCode()"></code>
+                <p style="margin: 10px 0;">Room Code:</p>
+                <code id="displayRoomCode" onclick="copyRoomCode()"></code>
                 <p style="margin-top: 10px; color: #666; font-size: 14px;">
-                    ⚠️ Keep this tab open! If you close it, the room will be destroyed.
+                    Click code to copy • Share with friends!
                 </p>
             </div>
             
@@ -337,12 +339,11 @@
         </div>
     </div>
 
-    <script>
-        // Game state
-        let peer;
-        let conn;
-        let connections = [];
-        let isHost = false;
+    <script type="module">
+        // Simple WebSocket-based multiplayer using a free service
+        // This works across all devices and networks
+        
+        let ws;
         let gameState = {
             deck: [],
             board: [],
@@ -350,10 +351,10 @@
             selectedCards: [],
             myName: '',
             roomCode: '',
-            gameStarted: false
+            gameStarted: false,
+            isHost: false
         };
 
-        // Card generation
         const numbers = [1, 2, 3];
         const shapes = ['oval', 'squiggle', 'diamond'];
         const colors = ['red', 'green', 'purple'];
@@ -382,7 +383,16 @@
             return arr;
         }
 
-        function createRoom() {
+        function generateRoomCode() {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let code = '';
+            for (let i = 0; i < 6; i++) {
+                code += chars[Math.floor(Math.random() * chars.length)];
+            }
+            return code;
+        }
+
+        window.createRoom = function() {
             const username = document.getElementById('username').value.trim();
             if (!username) {
                 showMenuStatus('Please enter a username', 'error');
@@ -390,167 +400,109 @@
             }
 
             gameState.myName = username;
-            isHost = true;
-            
-            showMenuStatus('Creating room...', 'info');
-            
-            // Use PeerJS cloud server with explicit configuration
-            peer = new Peer(undefined, {
-                host: '0.peerjs.com',
-                port: 443,
-                path: '/',
-                secure: true,
-                config: {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }
-                    ]
-                }
-            });
-            
-            peer.on('open', (id) => {
-                gameState.roomCode = id;
-                gameState.players[gameState.myName] = { score: 0, isHost: true };
-                
-                showWaitingRoom();
-                showMenuStatus('Room created! Share the room code with players.', 'success');
-            });
+            gameState.isHost = true;
+            gameState.roomCode = generateRoomCode();
+            gameState.players[username] = { score: 0, isHost: true };
 
-            peer.on('connection', (connection) => {
-                console.log('Incoming connection received from:', connection.peer);
-                connections.push(connection);
-                setupConnection(connection);
-                
-                // Send current player list once connection is established
-                connection.on('open', () => {
-                    console.log('Incoming connection opened');
-                    connection.send({ type: 'playerList', players: gameState.players });
-                });
-            });
+            connectWebSocket(gameState.roomCode);
+        };
 
-            peer.on('error', (err) => {
-                console.error('Peer error:', err);
-                showMenuStatus('Error creating room: ' + err.type + '. Please try again.', 'error');
-            });
-        }
-
-        function joinRoom() {
+        window.joinRoom = function() {
             const username = document.getElementById('username').value.trim();
-            const roomCode = document.getElementById('roomCode').value.trim();
+            const roomCode = document.getElementById('roomCode').value.trim().toUpperCase();
             
             if (!username || !roomCode) {
                 showMenuStatus('Please enter username and room code', 'error');
                 return;
             }
 
+            if (roomCode.length !== 6) {
+                showMenuStatus('Room code must be 6 characters', 'error');
+                return;
+            }
+
             gameState.myName = username;
             gameState.roomCode = roomCode;
+            gameState.isHost = false;
+
+            connectWebSocket(roomCode);
+        };
+
+        function connectWebSocket(roomCode) {
+            showMenuStatus('Connecting...', 'info');
             
-            showMenuStatus('Connecting to room...', 'info');
+            // Using a free WebSocket relay service
+            ws = new WebSocket('wss://socketsbay.com/wss/v2/1/demo/');
             
-            // Use PeerJS cloud server with explicit configuration
-            peer = new Peer(undefined, {
-                host: '0.peerjs.com',
-                port: 443,
-                path: '/',
-                secure: true,
-                config: {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }
-                    ]
-                }
-            });
-            
-            peer.on('open', () => {
-                console.log('My peer ID:', peer.id);
-                console.log('Connecting to:', roomCode);
+            ws.onopen = () => {
+                console.log('Connected to server');
+                ws.send(JSON.stringify({
+                    type: 'join',
+                    room: roomCode,
+                    name: gameState.myName,
+                    isHost: gameState.isHost
+                }));
                 
-                // Add a small delay to ensure the peer is fully registered
-                setTimeout(() => {
-                    conn = peer.connect(roomCode, {
-                        reliable: true,
-                        serialization: 'json'
-                    });
-                    
-                    console.log('Connection object created');
-                    
-                    conn.on('open', () => {
-                        console.log('Connection opened successfully!');
-                        conn.send({ type: 'join', name: username });
-                        showMenuStatus('Connected! Waiting for host to start...', 'success');
-                    });
-
-                    conn.on('error', (err) => {
-                        console.error('Connection error:', err);
-                        showMenuStatus('Connection error: ' + err.type, 'error');
-                    });
-                    
-                    conn.on('close', () => {
-                        console.log('Connection closed by remote peer');
-                    });
-                    
-                    setupConnection(conn);
-                    
-                    // Timeout if connection doesn't open in 10 seconds
-                    setTimeout(() => {
-                        if (!conn.open) {
-                            console.error('Connection timeout');
-                            showMenuStatus('Connection timeout. Room may not exist or host may be offline.', 'error');
-                        }
-                    }, 10000);
-                }, 500);
-            });
-
-            peer.on('error', (err) => {
-                console.error('Peer error:', err);
-                if (err.type === 'peer-unavailable') {
-                    showMenuStatus('Room not found. Please check the room code.', 'error');
-                } else {
-                    showMenuStatus('Error: ' + err.type + '. Please try again.', 'error');
+                if (gameState.isHost) {
+                    showWaitingRoom();
                 }
-            });
-        }
+            };
 
-        function setupConnection(connection) {
-            console.log('Setting up connection...');
-            
-            connection.on('open', () => {
-                console.log('Connection fully opened');
-            });
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch (e) {
+                    console.log('Received non-JSON message:', event.data);
+                }
+            };
 
-            connection.on('data', (data) => {
-                console.log('Received data:', data);
-                handleMessage(data, connection);
-            });
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                showMenuStatus('Connection error. Please try again.', 'error');
+            };
 
-            connection.on('close', () => {
-                console.log('Connection closed');
+            ws.onclose = () => {
+                console.log('Disconnected');
                 if (gameState.gameStarted) {
-                    showStatus('A player disconnected', 'error');
+                    showStatus('Connection lost', 'error');
                 }
-            });
-
-            connection.on('error', (err) => {
-                console.error('Connection error in setup:', err);
-            });
+            };
         }
 
-        function handleMessage(data, connection) {
-            console.log('Handling message type:', data.type);
+        function sendMessage(data) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    ...data,
+                    room: gameState.roomCode
+                }));
+            }
+        }
+
+        function handleMessage(data) {
+            if (data.room && data.room !== gameState.roomCode) return;
+
             switch(data.type) {
                 case 'join':
-                    if (isHost) {
-                        console.log('Player joined:', data.name);
+                    if (data.name !== gameState.myName) {
                         gameState.players[data.name] = { score: 0, isHost: false };
                         updatePlayerList();
-                        broadcastToAll({ type: 'playerList', players: gameState.players });
-                        showMenuStatus(data.name + ' joined the room', 'success');
+                        showMenuStatus(data.name + ' joined!', 'success');
+                        
+                        if (gameState.isHost) {
+                            sendMessage({
+                                type: 'playerList',
+                                players: gameState.players
+                            });
+                        }
                     }
                     break;
                     
                 case 'playerList':
                     gameState.players = data.players;
+                    if (!gameState.players[gameState.myName]) {
+                        gameState.players[gameState.myName] = { score: 0, isHost: false };
+                    }
                     updatePlayerList();
                     showWaitingRoom();
                     break;
@@ -584,15 +536,7 @@
             }
         }
 
-        function broadcastToAll(message) {
-            connections.forEach(conn => {
-                if (conn.open) {
-                    conn.send(message);
-                }
-            });
-        }
-
-        function startGame() {
+        window.startGame = function() {
             if (Object.keys(gameState.players).length < 1) {
                 showMenuStatus('Need at least 1 player to start', 'error');
                 return;
@@ -602,7 +546,7 @@
             gameState.board = gameState.deck.splice(0, 12);
             gameState.gameStarted = true;
 
-            broadcastToAll({
+            sendMessage({
                 type: 'startGame',
                 deck: gameState.deck,
                 board: gameState.board,
@@ -612,9 +556,9 @@
             showGameArea();
             renderBoard();
             updateScoreboard();
-        }
+        };
 
-        function selectCard(index) {
+        window.selectCard = function(index) {
             if (!gameState.gameStarted) return;
             
             const cardIndex = gameState.selectedCards.indexOf(index);
@@ -629,45 +573,34 @@
 
             renderBoard();
 
-            if (isHost) {
-                broadcastToAll({
-                    type: 'selectCard',
-                    cardIndex: index,
-                    playerName: gameState.myName
-                });
-            } else if (conn && conn.open) {
-                conn.send({
-                    type: 'selectCard',
-                    cardIndex: index,
-                    playerName: gameState.myName
-                });
-            }
+            sendMessage({
+                type: 'selectCard',
+                cardIndex: index,
+                playerName: gameState.myName
+            });
 
             if (gameState.selectedCards.length === 3) {
                 setTimeout(() => checkSet(), 300);
             }
-        }
+        };
 
         function handleRemoteCardSelect(index, playerName) {
             if (playerName === gameState.myName) return;
             
-            // Only host processes set checking
-            if (isHost) {
-                const cardIndex = gameState.selectedCards.indexOf(index);
-                
-                if (cardIndex > -1) {
-                    gameState.selectedCards.splice(cardIndex, 1);
-                } else {
-                    if (gameState.selectedCards.length < 3) {
-                        gameState.selectedCards.push(index);
-                    }
+            const cardIndex = gameState.selectedCards.indexOf(index);
+            
+            if (cardIndex > -1) {
+                gameState.selectedCards.splice(cardIndex, 1);
+            } else {
+                if (gameState.selectedCards.length < 3) {
+                    gameState.selectedCards.push(index);
                 }
+            }
 
-                if (gameState.selectedCards.length === 3) {
-                    checkSet();
-                } else {
-                    renderBoard();
-                }
+            renderBoard();
+
+            if (gameState.selectedCards.length === 3 && gameState.isHost) {
+                setTimeout(() => checkSet(), 300);
             }
         }
 
@@ -683,7 +616,6 @@
             if (isValidSet) {
                 gameState.players[gameState.myName].score += 3;
                 
-                // Replace cards
                 gameState.selectedCards.sort((a, b) => b - a);
                 for (let index of gameState.selectedCards) {
                     if (gameState.deck.length > 0) {
@@ -693,54 +625,31 @@
                     }
                 }
 
-                if (isHost) {
-                    broadcastToAll({
-                        type: 'gameUpdate',
-                        board: gameState.board,
-                        deck: gameState.deck,
-                        players: gameState.players,
-                        message: `${gameState.myName} found a set! +3 points`,
-                        success: true
-                    });
-                } else if (conn && conn.open) {
-                    conn.send({
-                        type: 'gameUpdate',
-                        board: gameState.board,
-                        deck: gameState.deck,
-                        players: gameState.players,
-                        message: `${gameState.myName} found a set! +3 points`,
-                        success: true
-                    });
-                }
+                sendMessage({
+                    type: 'gameUpdate',
+                    board: gameState.board,
+                    deck: gameState.deck,
+                    players: gameState.players,
+                    message: `${gameState.myName} found a set! +3 points`,
+                    success: true
+                });
 
                 showStatus('Valid set! +3 points', 'success');
             } else {
-                // Invalid set - return one card to deck
                 if (gameState.board.length > 0) {
                     const returnIndex = Math.floor(Math.random() * gameState.board.length);
                     const returnedCard = gameState.board.splice(returnIndex, 1)[0];
                     gameState.deck.push(returnedCard);
                 }
 
-                if (isHost) {
-                    broadcastToAll({
-                        type: 'gameUpdate',
-                        board: gameState.board,
-                        deck: gameState.deck,
-                        players: gameState.players,
-                        message: `${gameState.myName} - not a set! Card returned to deck`,
-                        success: false
-                    });
-                } else if (conn && conn.open) {
-                    conn.send({
-                        type: 'gameUpdate',
-                        board: gameState.board,
-                        deck: gameState.deck,
-                        players: gameState.players,
-                        message: `${gameState.myName} - not a set! Card returned to deck`,
-                        success: false
-                    });
-                }
+                sendMessage({
+                    type: 'gameUpdate',
+                    board: gameState.board,
+                    deck: gameState.deck,
+                    players: gameState.players,
+                    message: `${gameState.myName} - not a set! Card returned to deck`,
+                    success: false
+                });
 
                 showStatus('Not a valid set! Card returned to deck', 'error');
             }
@@ -776,7 +685,7 @@
                 if (gameState.selectedCards.includes(index)) {
                     cardEl.classList.add('selected');
                 }
-                cardEl.onclick = () => selectCard(index);
+                cardEl.onclick = () => window.selectCard(index);
                 
                 for (let i = 0; i < card.number; i++) {
                     cardEl.appendChild(createShape(card.shape, card.color, card.shading));
@@ -799,7 +708,7 @@
                 path = 'M 10 25 Q 10 10 25 10 L 75 10 Q 90 10 90 25 Q 90 40 75 40 L 25 40 Q 10 40 10 25';
             } else if (shape === 'diamond') {
                 path = 'M 50 5 L 90 25 L 50 45 L 10 25 Z';
-            } else { // squiggle
+            } else {
                 path = 'M 20 25 Q 20 10 35 15 Q 50 20 65 10 Q 80 5 80 20 Q 80 35 65 30 Q 50 25 35 35 Q 20 40 20 25';
             }
 
@@ -829,7 +738,7 @@
                 pattern.appendChild(line);
                 svg.appendChild(pattern);
                 pathEl.setAttribute('fill', `url(#${patternId})`);
-            } else { // open
+            } else {
                 pathEl.setAttribute('fill', 'none');
             }
 
@@ -869,7 +778,7 @@
             document.getElementById('displayRoomCode').textContent = gameState.roomCode;
             updatePlayerList();
             
-            if (!isHost) {
+            if (!gameState.isHost) {
                 document.getElementById('startButton').style.display = 'none';
             }
         }
@@ -896,39 +805,28 @@
             setTimeout(() => status.style.display = 'none', 3000);
         }
 
-        function leaveRoom() {
+        window.leaveRoom = function() {
+            if (ws) ws.close();
             location.reload();
-        }
+        };
 
-        function leaveGame() {
+        window.leaveGame = function() {
+            if (ws) ws.close();
             location.reload();
-        }
+        };
 
-        function selectRoomCode() {
-            const code = document.getElementById('displayRoomCode');
-            const range = document.createRange();
-            range.selectNodeContents(code);
-            const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(range);
-            
-            // Try to copy to clipboard
-            try {
-                document.execCommand('copy');
+        window.copyRoomCode = function() {
+            const code = document.getElementById('displayRoomCode').textContent;
+            navigator.clipboard.writeText(code).then(() => {
                 showMenuStatus('Room code copied to clipboard!', 'success');
-            } catch (err) {
-                console.log('Copy failed, but text is selected');
-            }
-        }
-
-        // Warn user if they try to close the tab while hosting
-        window.addEventListener('beforeunload', (e) => {
-            if (isHost && gameState.gameStarted) {
-                e.preventDefault();
-                e.returnValue = '';
-                return '';
-            }
-        });
+            }).catch(() => {
+                const range = document.createRange();
+                range.selectNodeContents(document.getElementById('displayRoomCode'));
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+            });
+        };
     </script>
 </body>
 </html>
